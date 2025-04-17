@@ -22,8 +22,8 @@ This repository contains three AI demo applications showcasing different capabil
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/ai-demo-applications.git
-cd ai-demo-applications
+git clone https://github.com/Akaiko1/Alcora.Preview.git
+cd Alcora.Preview
 ```
 
 ### 2. Big Data Dashboard (Vite + React)
