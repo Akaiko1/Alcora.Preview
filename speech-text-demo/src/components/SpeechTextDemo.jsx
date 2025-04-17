@@ -1,49 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
-
-const knowledgeBase = {
-  приветствие: [
-    'Здравствуйте! Чем я могу вам помочь?',
-    'Добрый день! Я готов ответить на ваши вопросы.',
-  ],
-  'процедуры компании': [
-    'В нашей компании установлены четкие процедуры для всех бизнес-процессов. Вы можете найти их на внутреннем портале.',
-    'Все рабочие процедуры доступны в разделе HR на корпоративном портале.',
-  ],
-  обучение: [
-    'Наша компания предлагает различные программы обучения для сотрудников, включая онлайн-курсы и очные тренинги.',
-    'Вы можете записаться на курсы повышения квалификации через портал обучения.',
-  ],
-  отпуск: [
-    'Чтобы оформить отпуск, заполните заявление в системе HR и согласуйте даты с вашим руководителем.',
-    'Процедура оформления отпуска начинается с заявки в HR-системе не менее чем за 2 недели до предполагаемой даты.',
-  ],
-  больничный: [
-    'В случае болезни сообщите своему руководителю и отправьте больничный лист в HR-отдел.',
-    'Больничный лист необходимо предоставить в HR в течение 3 дней после выхода на работу.',
-  ],
-  расписание: [
-    'Рабочий день начинается в 9:00 и заканчивается в 18:00 с перерывом на обед с 13:00 до 14:00.',
-    'У нас гибкий график работы с обязательным присутствием с 11:00 до 16:00.',
-  ],
-  'техническая поддержка': [
-    'По вопросам технической поддержки обращайтесь по внутреннему номеру 1234 или по email support@company.com.',
-    'Техническая поддержка работает в режиме 24/7, вы можете создать заявку через внутренний портал.',
-  ],
-};
-
-const sampleQuestions = {
-  приветствие: 'Здравствуйте, чем вы можете помочь?',
-  'процедуры компании': 'Где можно найти информацию о процедурах компании?',
-  обучение: 'Какие программы обучения доступны для сотрудников?',
-  отпуск: 'Как оформить отпуск?',
-  больничный: 'Что делать в случае болезни?',
-  расписание: 'Какой у нас рабочий график?',
-  'техническая поддержка': 'Куда обращаться по вопросам технической поддержки?',
-};
-
-const getSampleQuestion = (keyword) => {
-  return sampleQuestions[keyword] || `Расскажите о ${keyword}`;
-};
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { knowledgeBase, nlpTools, generateSampleQuestions } from './SpeechUtils';
+import { 
+  VoiceWave, 
+  ConfidenceIndicator, 
+  SentimentIndicator,
+  IntentIndicator,
+  DialogHistory,
+  SuggestedQuestions,
+  NlpInfoBlock
+} from './SpeechComponents';
+import './SpeechTextDemo.css';
 
 const SpeechTextDemo = () => {
   const [isListening, setIsListening] = useState(false);
@@ -53,59 +19,155 @@ const SpeechTextDemo = () => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [sentiment, setSentiment] = useState(null);
+  const [intent, setIntent] = useState(null);
+  const [confidence, setConfidence] = useState(null);
+  const [detectedCategory, setDetectedCategory] = useState(null);
+  const [dialogHistory, setDialogHistory] = useState([]);
+  const [voiceSupport, setVoiceSupport] = useState({
+    speechRecognition: false,
+    speechSynthesis: false
+  });
+
+  // Мемоизируем семплы вопросов, чтобы они не генерировались при каждом рендере
+  const sampleQuestions = useMemo(() => generateSampleQuestions(), []);
 
   const recognitionRef = useRef(null);
   const utteranceRef = useRef(null);
   const textInputRef = useRef(null);
-
+  
+  // Проверка поддержки голосовых возможностей браузера
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
+    const hasSpeechRecognition = !!SpeechRecognition;
+    const hasSpeechSynthesis = !!window.speechSynthesis;
+    
+    setVoiceSupport({
+      speechRecognition: hasSpeechRecognition,
+      speechSynthesis: hasSpeechSynthesis
+    });
+    
+    if (hasSpeechRecognition) {
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.lang = 'ru-RU';
-
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = true;
+      
       recognitionRef.current.onresult = (event) => {
         const result = event.results[0][0].transcript;
         setTranscript(result);
-        setQuery(result);
-        processQuery(result);
+        if (event.results[0].isFinal) {
+          setQuery(result);
+          processQuery(result);
+        }
       };
-      recognitionRef.current.onerror = (e) => { setError(`Ошибка распознавания речи: ${e.error}`); setIsListening(false); };
+      
+      recognitionRef.current.onerror = (e) => { 
+        setError(`Ошибка распознавания речи: ${e.error}`); 
+        setIsListening(false); 
+      };
+      
       recognitionRef.current.onend = () => setIsListening(false);
     } else {
       setError('Ваш браузер не поддерживает распознавание речи.');
     }
-    textInputRef.current?.focus();
+    
+    if (textInputRef.current) {
+      textInputRef.current.focus();
+    }
+    
+    // Очистка при размонтировании
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+      }
+      if (isSpeaking) {
+        if (window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+        }
+      }
+    };
   }, []);
 
-  const startListening = () => { setError(null); setTranscript(''); recognitionRef.current.start(); setIsListening(true); };
-  const stopListening = () => { recognitionRef.current.stop(); setIsListening(false); };
+  const startListening = () => { 
+    setError(null); 
+    setTranscript(''); 
+    if (recognitionRef.current) {
+      recognitionRef.current.start(); 
+      setIsListening(true);
+    }
+  };
+  
+  const stopListening = () => { 
+    if (recognitionRef.current) {
+      recognitionRef.current.stop(); 
+    }
+    setIsListening(false); 
+  };
 
   const processQuery = (text) => {
     setLoading(true);
+    
+    // Анализируем запрос с помощью NLP инструментов
+    const processedQuery = nlpTools.processQuery(text);
+    const sentimentResult = nlpTools.analyzeSentiment(text);
+    const intentResult = nlpTools.detectIntent(text);
+    
+    setSentiment(sentimentResult);
+    setIntent(intentResult);
+    
+    // Определяем категорию запроса
+    let bestCategory = null;
+    let bestScore = 0;
+    let bestConfidence = 0;
+    
+    // Для каждой категории считаем score
+    Object.entries(knowledgeBase).forEach(([category, data]) => {
+      const score = nlpTools.calculateScore(processedQuery, data);
+      if (score > bestScore) {
+        bestScore = score;
+        bestCategory = category;
+        // Нормализуем уверенность 
+        bestConfidence = Math.min(1, score / 2);
+      }
+    });
+    
+    setDetectedCategory(bestCategory);
+    setConfidence(bestConfidence);
+    
+    // Формируем ответ
     setTimeout(() => {
-      const normalized = text.toLowerCase().trim();
-      let matchedKey;
-
-      // 1) по точному совпадению рекомендованного вопроса
-      for (const [key, q] of Object.entries(sampleQuestions)) {
-        if (normalized === q.toLowerCase().trim()) {
-          matchedKey = key;
-          break;
-        }
+      let responseText = '';
+      
+      if (bestCategory && bestScore > 0.1) {
+        // Выбираем случайный ответ из категории
+        const responses = knowledgeBase[bestCategory].responses;
+        responseText = responses[Math.floor(Math.random() * responses.length)];
+      } else {
+        responseText = 'Извините, я не могу найти информацию по вашему запросу. Пожалуйста, переформулируйте вопрос или выберите один из рекомендуемых вопросов ниже.';
       }
-      // 2) по наличию ключевого слова
-      if (!matchedKey) {
-        matchedKey = Object.keys(knowledgeBase).find(k => normalized.includes(k));
-      }
-
-      const found = matchedKey
-        ? knowledgeBase[matchedKey][Math.floor(Math.random() * knowledgeBase[matchedKey].length)]
-        : 'Извините, я не могу найти информацию по вашему запросу. Пожалуйста, выберите один из рекомендуемых вопросов ниже.';
-
-      setResponse(found);
+      
+      // Добавляем в историю диалога
+      const dialogEntry = {
+        query: text,
+        response: responseText,
+        timestamp: new Date().toLocaleTimeString(),
+        sentiment: sentimentResult,
+        intent: intentResult,
+        category: bestCategory,
+        confidence: bestConfidence
+      };
+      
+      setDialogHistory(prev => [...prev, dialogEntry]);
+      
+      // Обновляем состояние
+      setResponse(responseText);
       setLoading(false);
-      speakResponse(found);
+      
+      // Озвучиваем ответ
+      speakResponse(responseText);
     }, 500);
   };
 
@@ -113,46 +175,126 @@ const SpeechTextDemo = () => {
     if (window.speechSynthesis) {
       if (isSpeaking) window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'ru-RU'; u.rate = 1.0; u.pitch = 1.2;
+      u.lang = 'ru-RU'; 
+      u.rate = 1.0; 
+      u.pitch = 1.2;
       utteranceRef.current = u;
       u.onstart = () => setIsSpeaking(true);
       u.onend = () => setIsSpeaking(false);
+      u.onerror = () => {
+        setIsSpeaking(false);
+        setError('Произошла ошибка при синтезе речи.');
+      };
       window.speechSynthesis.speak(u);
-    } else setError('Ваш браузер не поддерживает синтез речи.');
+    } else {
+      setError('Ваш браузер не поддерживает синтез речи.');
+    }
   };
 
-  const stopSpeaking = () => { window.speechSynthesis.cancel(); setIsSpeaking(false); };
-  const handleSubmit = e => { e.preventDefault(); if (query.trim()) processQuery(query); };
-
+  const stopSpeaking = () => { 
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel(); 
+    }
+    setIsSpeaking(false); 
+  };
+  
+  const handleSubmit = (e) => { 
+    e.preventDefault(); 
+    if (query.trim()) {
+      processQuery(query);
+    }
+  };
+  
+  const handleSampleQuestion = (question) => {
+    setQuery(question);
+    processQuery(question);
+  };
+  
+  const handleClearHistory = () => {
+    setDialogHistory([]);
+    setResponse('');
+    setQuery('');
+    setSentiment(null);
+    setIntent(null);
+    setDetectedCategory(null);
+    setConfidence(null);
+  };
+  
   return (
     <div className="speech-demo-container">
-      <h2 className="speech-demo-title">Интерактивная база знаний</h2>
+      <h2 className="speech-demo-title">Интеллектуальная база знаний с NLP</h2>
+      
       {error && <div className="speech-error">{error}</div>}
-      <div className="speech-buttons">
-        <button onClick={isListening ? stopListening : startListening} className={isListening ? 'btn btn-red' : 'btn btn-blue'}>
-          {isListening ? '🛑 Остановить запись' : '🎤 Начать запись'}
-        </button>
-        {isSpeaking && <button onClick={stopSpeaking} className="btn btn-yellow">🔇 Остановить голос</button>}
+      
+      {!voiceSupport.speechRecognition && (
+        <div className="speech-warning">
+          Ваш браузер не поддерживает распознавание речи. Функция голосового ввода недоступна.
+        </div>
+      )}
+      
+      <div className="speech-voice-controls">
+        <div className="speech-buttons">
+          {voiceSupport.speechRecognition && (
+            <button onClick={isListening ? stopListening : startListening} className={isListening ? 'btn btn-red' : 'btn btn-blue'}>
+              {isListening ? '🛑 Остановить запись' : '🎤 Начать запись'}
+            </button>
+          )}
+          {isSpeaking && voiceSupport.speechSynthesis && (
+            <button onClick={stopSpeaking} className="btn btn-yellow">
+              🔇 Остановить голос
+            </button>
+          )}
+        </div>
+        
+        <VoiceWave isListening={isListening} />
+        
+        {isListening && <div className="speech-listening">Слушаю... {transcript}</div>}
       </div>
+      
       <form onSubmit={handleSubmit} className="input-group">
-        <input ref={textInputRef} className="speech-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="Введите ваш вопрос..." />
+        <input 
+          ref={textInputRef} 
+          className="speech-input" 
+          value={query} 
+          onChange={(e) => setQuery(e.target.value)} 
+          placeholder="Введите ваш вопрос..." 
+        />
         <button type="submit" className="btn btn-green">Отправить</button>
       </form>
-      {isListening && <div className="speech-listening">Слушаю... {transcript}</div>}
+      
       {loading && <div className="speech-loading"><div className="loading-spinner"></div> Обрабатываю запрос...</div>}
-      {response && !loading && <div className="speech-response">{response}</div>}
-      <div className="suggestions">
-        <h3>Рекомендуемые вопросы:</h3>
-        <ul>
-          {Object.keys(sampleQuestions).map(k => (
-            <li key={k}>
-              <button onClick={() => setQuery(sampleQuestions[k])}>
-                {sampleQuestions[k]}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
+      
+      {response && !loading && (
+        <div className="speech-response-container">
+          <div className="speech-metadata">
+            <SentimentIndicator sentiment={sentiment} />
+            <IntentIndicator intent={intent} />
+            {detectedCategory && (
+              <div className="speech-category">
+                Категория: <span className="category-name">{detectedCategory}</span>
+              </div>
+            )}
+          </div>
+          
+          {confidence !== null && <ConfidenceIndicator confidence={confidence} />}
+          
+          <div className="speech-response">
+            {response}
+          </div>
+        </div>
+      )}
+      
+      <DialogHistory 
+        dialogHistory={dialogHistory} 
+        onClear={handleClearHistory} 
+      />
+      
+      <SuggestedQuestions 
+        questions={sampleQuestions} 
+        onSelect={handleSampleQuestion}
+      />
+      
+      <NlpInfoBlock />
     </div>
   );
 };
